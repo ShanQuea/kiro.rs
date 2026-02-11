@@ -1390,28 +1390,34 @@ impl MultiTokenManager {
 
         let usage_limits = get_usage_limits(&credentials, &self.config, &token, self.proxy.as_ref()).await?;
 
-        // 更新订阅等级到凭据
+        // 更新订阅等级到凭据（仅在发生变化时持久化）
         if let Some(subscription_title) = usage_limits.subscription_title() {
-            let mut entries = self.entries.lock();
-            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
-                let old_title = entry.credentials.subscription_title.clone();
-                entry.credentials.subscription_title = Some(subscription_title.to_string());
-
-                // 如果订阅等级发生变化，记录日志
-                if old_title.as_deref() != Some(subscription_title) {
-                    tracing::info!(
-                        "凭据 #{} 订阅等级已更新: {:?} -> {}",
-                        id,
-                        old_title,
-                        subscription_title
-                    );
+            let changed = {
+                let mut entries = self.entries.lock();
+                if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                    let old_title = entry.credentials.subscription_title.clone();
+                    if old_title.as_deref() != Some(subscription_title) {
+                        entry.credentials.subscription_title =
+                            Some(subscription_title.to_string());
+                        tracing::info!(
+                            "凭据 #{} 订阅等级已更新: {:?} -> {}",
+                            id,
+                            old_title,
+                            subscription_title
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
                 }
-            }
-            drop(entries);
+            };
 
-            // 持久化订阅等级更新
-            if let Err(e) = self.persist_credentials() {
-                tracing::warn!("订阅等级更新后持久化失败（不影响本次请求）: {}", e);
+            if changed {
+                if let Err(e) = self.persist_credentials() {
+                    tracing::warn!("订阅等级更新后持久化失败（不影响本次请求）: {}", e);
+                }
             }
         }
 
